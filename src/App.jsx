@@ -21,6 +21,28 @@ const INDICES = [
 
 const PROXY = "https://corsproxy.io/?url=";
 
+const CACHE_KEY_QUOTES  = "nse_cached_quotes";
+const CACHE_KEY_INDICES = "nse_cached_indices";
+const CACHE_KEY_TIME    = "nse_cached_time";
+
+function saveCache(quotes, indices) {
+  try {
+    localStorage.setItem(CACHE_KEY_QUOTES,  JSON.stringify(quotes));
+    localStorage.setItem(CACHE_KEY_INDICES, JSON.stringify(indices));
+    localStorage.setItem(CACHE_KEY_TIME,    new Date().toISOString());
+  } catch (_) {}
+}
+function loadCache() {
+  try {
+    const quotes  = JSON.parse(localStorage.getItem(CACHE_KEY_QUOTES)  || "{}");
+    const indices = JSON.parse(localStorage.getItem(CACHE_KEY_INDICES) || "{}");
+    const time    = localStorage.getItem(CACHE_KEY_TIME);
+    return { quotes, indices, time };
+  } catch (_) {
+    return { quotes: {}, indices: {}, time: null };
+  }
+}
+
 function buildQuoteURL(syms) {
   return `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${syms}&fields=regularMarketPrice,regularMarketChangePercent,regularMarketChange,regularMarketPreviousClose,regularMarketOpen,regularMarketDayHigh,regularMarketDayLow,regularMarketVolume,fiftyTwoWeekHigh,fiftyTwoWeekLow,marketState,shortName`;
 }
@@ -84,15 +106,17 @@ function SignalBadge({ signal }) {
 }
 
 export default function App() {
-  const [quotes, setQuotes] = useState({});
+  const initCache = loadCache();
+  const [quotes, setQuotes] = useState(initCache.quotes || {});
   const [history, setHistory] = useState({});
-  const [indices, setIndices] = useState({});
+  const [indices, setIndices] = useState(initCache.indices || {});
   const [selected, setSelected] = useState("RELIANCE.NS");
   const [tab, setTab] = useState("watch");
   const [loading, setLoading] = useState(true);
   const [histLoading, setHistLoading] = useState(false);
   const [error, setError] = useState("");
-  const [lastUpdate, setLastUpdate] = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(initCache.time ? new Date(initCache.time) : null);
+  const [usingCache, setUsingCache] = useState(Object.keys(initCache.quotes).length > 0);
   const [marketState, setMarketState] = useState("CLOSED");
   const [aiText, setAiText] = useState({});
   const [aiLoading, setAiLoading] = useState({});
@@ -119,9 +143,20 @@ export default function App() {
       setQuotes(newQ);
       setIndices(newI);
       setLastUpdate(new Date());
+      setUsingCache(false);
       setError("");
+      saveCache(newQ, newI);
     } catch (e) {
-      setError("Yahoo Finance fetch failed: " + e.message + ". Retrying in 60s...");
+      const cached = loadCache();
+      if (Object.keys(cached.quotes).length > 0) {
+        setQuotes(cached.quotes);
+        setIndices(cached.indices);
+        setLastUpdate(cached.time ? new Date(cached.time) : null);
+        setUsingCache(true);
+        setError("Live fetch failed — showing last cached prices from " + (cached.time ? new Date(cached.time).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) : "previous session"));
+      } else {
+        setError("Yahoo Finance fetch failed: " + e.message + ". No cache available.");
+      }
     } finally {
       setLoading(false);
     }
@@ -140,7 +175,10 @@ export default function App() {
     setHistLoading(false);
   }, [history]);
 
-  useEffect(() => { fetchQuotes(); }, []);
+  useEffect(() => {
+    if (Object.keys(initCache.quotes).length > 0) setLoading(false);
+    fetchQuotes();
+  }, []);
   useEffect(() => {
     const interval = marketState === "REGULAR" ? 30000 : 120000;
     const id = setInterval(fetchQuotes, interval);
@@ -261,7 +299,13 @@ export default function App() {
           {lastUpdate && <span style={{ marginLeft: "auto", color: "#374151" }}>Fetched: {lastUpdate.toLocaleTimeString("en-IN")}</span>}
         </div>
       )}
-      {error && (
+      {usingCache && (
+        <div style={{ background: "#0d1a2d", borderBottom: "1px solid #1e3a5f", padding: "6px 18px", fontSize: 11, color: "#60a5fa", display: "flex", alignItems: "center", gap: 8 }}>
+          <span>💾</span>
+          <span>Showing <strong style={{ color: "#93c5fd" }}>cached prices</strong> from last market session — {lastUpdate ? lastUpdate.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short", year: "numeric" }) : "previous session"}. Live data will load automatically when market opens.</span>
+          <button onClick={fetchQuotes} style={{ marginLeft: "auto", background: "#1e3a5f", border: "none", borderRadius: 4, padding: "2px 10px", color: "#93c5fd", cursor: "pointer", fontSize: 10 }}>↻ Try Live</button>
+        </div>
+      )}
         <div style={{ background: "#1c0a0a", borderBottom: "1px solid #2a1010", padding: "6px 18px", fontSize: 11, color: "#f87171", display: "flex", alignItems: "center", gap: 6 }}>
           ⚠ {error}
           <button onClick={fetchQuotes} style={{ marginLeft: 10, background: "#7f1d1d", border: "none", borderRadius: 4, padding: "2px 8px", color: "#fca5a5", cursor: "pointer", fontSize: 10 }}>Retry</button>
@@ -293,7 +337,7 @@ export default function App() {
           <button key={id} onClick={() => setTab(id)} style={{ background: "none", border: "none", padding: "12px 16px", cursor: "pointer", color: tab === id ? "#818cf8" : "#374151", fontWeight: tab === id ? 600 : 400, borderBottom: tab === id ? "2px solid #6366f1" : "2px solid transparent", fontSize: 12 }}>{label}</button>
         ))}
         <div style={{ marginLeft: "auto", fontSize: 10, color: "#1f2937" }}>
-          {lastUpdate && <><span style={{ color: dotColor }}>●</span> {marketLabel} · {lastUpdate.toLocaleTimeString("en-IN")}</>}
+          {lastUpdate && <><span style={{ color: usingCache ? "#60a5fa" : dotColor }}>●</span> {usingCache ? "CACHED" : marketLabel} · {lastUpdate.toLocaleTimeString("en-IN")}</>}
         </div>
       </div>
 
